@@ -1,0 +1,24 @@
+chore: initial walking skeleton for stratoclave-loom v0.1
+
+Pure Python abstraction over coding agent CLIs (Claude Code, OpenCode,
+Kiro, Codex) speaking ACP. This commit lands the v0.1 walking skeleton:
+
+- Repository scaffolding (LICENSE Apache-2.0, README, CONTRIBUTING,
+  SECURITY, CODE_OF_CONDUCT, .gitignore).
+- pyproject.toml with hatchling, ruff, mypy strict, pytest, coverage.
+- src/stratoclave_loom/
+  - core/ types, AgentBackend ABC, errors, AgentSession.
+  - config.py env-driven LoomSettings (no hardcoded values).
+  - transport/stdio.py StdioTransport (start/send/receive/cancel/close).
+  - adapters/_registry, _base, mock (deterministic in-memory backend),
+    claude_code (skeleton with normalize() and resume validation).
+  - runtime/process_pool.py semaphore-based lease.
+  - cli.py `stratoclave-loom list-backends` and `run` subcommands.
+- tests/ 18 passing tests (unit + adapter), pytest-asyncio in auto mode.
+- .github/workflows/ci.yml matrix on Python 3.11/3.12 with ruff +
+  ruff-format + mypy + pytest.
+- docs/ DESIGN.md (4 OSS series spec), GETTING_STARTED.md,
+  PROJECT_STATUS.md, PROJECT_RULES.md.
+
+Quality gates locally green:
+  ruff check / ruff format --check / mypy --strict / pytest -q (18 passed)
