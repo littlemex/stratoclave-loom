@@ -54,9 +54,9 @@ something important.
 
 | Adapter      | Status                | Notes                              |
 |--------------|-----------------------|-------------------------------------|
-| Claude Code  | v0.1 (in progress)    | Reference adapter                   |
+| Claude Code  | v0.1 (live)           | Reference adapter (`claude --print` stream-json) |
+| Kiro CLI     | v0.1 (live)           | `kiro-cli acp` — native ACP JSON-RPC over stdio |
 | OpenCode     | v0.2 (planned)        | Pending PoC of native ACP           |
-| Kiro         | v0.3 (planned)        | Adapter strategy depends on PoC     |
 | Codex        | v0.3 (planned)        | OpenAI streaming → AcpChunk         |
 | Mock         | v0.1                  | For tests and getting-started demos |
 
@@ -116,6 +116,8 @@ variables:
 | `STRATOCLAVE_LOOM_CANCEL_GRACE_MS` | Grace period before SIGTERM after SIGINT |
 | `ANTHROPIC_BASE_URL`        | Forwarded to Claude Code subprocess             |
 | `ANTHROPIC_AUTH_TOKEN`      | Forwarded to Claude Code subprocess             |
+| `STRATOCLAVE_LOOM_CLAUDE_CLI` | Override the `claude` executable path          |
+| `STRATOCLAVE_LOOM_KIRO_CLI` | Override the `kiro-cli` executable path         |
 
 `BackendConfig.env` always takes precedence over the parent process
 environment for child subprocesses.

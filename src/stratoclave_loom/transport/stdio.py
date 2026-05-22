@@ -75,6 +75,13 @@ class StdioTransport:
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise TransportError(f"failed to write to subprocess stdin: {exc}") from exc
 
+    async def close_stdin(self) -> None:
+        """Close stdin so the child can observe EOF."""
+        proc = self._proc
+        if proc is None or proc.stdin is None or proc.stdin.is_closing():
+            return
+        proc.stdin.close()
+
     async def receive(self) -> AsyncIterator[Mapping[str, Any]]:
         """Yield each JSON message from stdout until EOF.
 

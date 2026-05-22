@@ -1,116 +1,145 @@
-# stratoclave-loom 実装状況
+# stratoclave-loom — project status
 
-**最終更新**: 2026-05-21
-**プロジェクト開始**: 2026-05-21
+**Last updated**: 2026-05-22 (kiro_code adapter added)
+**Project started**: 2026-05-21
 
-## 総合進捗
+## Overall progress
 
-### 実装完了状況 (v0.1 Walking Skeleton)
+### v0.1 walking skeleton — implementation status
 
-| モジュール | 状態 | テスト | 備考 |
+| Module | Status | Tests | Notes |
 |---|---|---|---|
-| `core.types` (`AcpChunk` / `BackendConfig` / `NormalizedTurn` / `PermissionRequest`) | 完了 | 間接的 | dataclass、frozen |
-| `core.errors` (`LoomError` 階層) | 完了 | 間接的 | 5 種類 |
-| `core.backend` (`AgentBackend` ABC) | 完了 | 間接的 | 7 メソッド |
-| `core.session` (`AgentSession`) | 完了 | 完了 | async context manager |
-| `config` (env loader, `LoomSettings`) | 完了 | 完了 | デフォルト + override |
-| `transport.stdio` (`StdioTransport`) | 完了 | 完了 | spawn / send / receive / cancel |
-| `runtime.process_pool` (`ProcessPool`) | 完了 | 完了 | semaphore lease |
-| `adapters._registry` (`register_backend` / `get_backend`) | 完了 | 完了 | グローバル dict |
-| `adapters.mock` (`MockBackend`) | 完了 | 完了 | text_delta + end_turn + cancel |
-| `adapters.claude_code` (`ClaudeCodeBackend`) | スケルトン | 部分完了 | `normalize` のみ動作、send_message は未実装 |
-| `cli` (`stratoclave-loom run/list-backends`) | 完了 | 完了 | argparse、JSONL 出力 |
+| `core.types` (`AcpChunk` / `BackendConfig` / `NormalizedTurn` / `PermissionRequest`) | done | indirect | frozen dataclasses |
+| `core.errors` (`LoomError` hierarchy) | done | indirect | 5 error classes |
+| `core.backend` (`AgentBackend` ABC) | done | indirect | 7 abstract methods |
+| `core.session` (`AgentSession`) | done | done | async context manager |
+| `config` (env loader, `LoomSettings`) | done | done | defaults + env override |
+| `transport.stdio` (`StdioTransport`) | done | done | spawn / send / receive / cancel / close |
+| `runtime.process_pool` (`ProcessPool`) | done | done | semaphore-based lease |
+| `adapters._registry` (`register_backend` / `get_backend`) | done | done | global dict |
+| `adapters.mock` (`MockBackend`) | done | done | char-wise text_delta + end_turn + cancel |
+| **`adapters.claude_code` (`ClaudeCodeBackend`)** | **done** | **done** | spawns `claude --print --output-format stream-json`, captures CLI session_id from `system/init`, propagates to `--resume` on subsequent turns. End-to-end verified against `claude` 2.1.145 |
+| **`adapters.kiro_code` (`KiroCodeBackend`)** | **done** | **done** | drives `kiro-cli acp` via JSON-RPC 2.0 (initialize → session/new → session/prompt). Translates `agent_message_chunk` / `tool_call` / `tool_call_update` into AcpChunks; cancel via `session/cancel`. End-to-end verified against `kiro-cli` 2.4.0 |
+| `cli` (`stratoclave-loom run/list-backends`) | done | done | argparse, JSONL stdout |
+| `examples/quickstart.py` | done | manual | prefers `claude_code`, then `kiro_code`, falls back to `mock` |
 
-### 品質チェック
+### Quality gates
 
-| 項目 | 結果 |
+| Item | Result |
 |---|---|
-| pytest (18 件) | PASS |
-| ruff lint | PASS |
-| ruff format | PASS |
-| mypy strict | PASS |
-| Python | 3.12 で動作確認、CI で 3.11/3.12 を実行予定 |
+| pytest | 37 passed (27 base + 10 kiro_code wire-level) |
+| ruff lint | clean |
+| ruff format | clean |
+| mypy strict | clean |
+| Python | verified on 3.12, CI runs 3.11 + 3.12 |
+| Live `claude` CLI | end-to-end verified (text_delta → end_turn) |
+| Live `kiro-cli` | end-to-end verified (text_delta → end_turn against `kiro-cli acp` 2.4.0) |
 
-### 統合状況
+### Cross-OSS integration
 
-| 連携先 | 状態 | 備考 |
+| Counterpart | Status | Notes |
 |---|---|---|
-| stratoclave (Bedrock proxy) | 未連携 | env passthrough のみ。直接依存なし |
-| stratoclave-distill | 未着手 | 別 OSS、まだ未開発 |
-| stratoclave-atelier | 未着手 | 別 OSS、まだ未開発 |
-| claude-capture (移行元) | 未着手 | atelier 完成後に置き換える計画 |
+| stratoclave (Bedrock proxy) | not coupled | env passthrough only; no direct import |
+| stratoclave-distill | not started | separate OSS, future work |
+| stratoclave-atelier | not started | separate OSS, future work |
+| claude-capture (legacy) | not started | replaced after atelier ships |
 
-## 完了した作業
+## Completed work
 
-### 2026-05-21
+### 2026-05-22 — Kiro Code adapter (ACP backend)
 
-- DESIGN.md (4 OSS 全体設計、1014 行) を確定
-- リポジトリ骨組み (LICENSE / README / CONTRIBUTING / SECURITY / CODE_OF_CONDUCT / .gitignore)
-- pyproject.toml (Python 3.11+ / Apache 2.0 / pytest+ruff+mypy+coverage)
-- core / config / transport / adapters / runtime / cli モジュール
-- mock backend と claude_code backend (skeleton)
-- 単体テスト 18 件、CLI smoke、StdioTransport ラウンドトリップ
-- GitHub Actions CI ワークフロー
-- 必須ドキュメント 3 点 (本ファイル含む)
+- New `KiroCodeBackend` (`src/stratoclave_loom/adapters/kiro_code.py`, ~590 LoC) drives `kiro-cli acp` over JSON-RPC 2.0 on stdio.
+- Handshake: `initialize` (protocolVersion 1) → `session/new` (or `session/load` when `extra['acp_session_id']` is supplied) → `session/prompt`. The adapter holds one long-lived subprocess per loom session and demultiplexes responses with a reader task.
+- Stream translation: `session/update` notifications map to AcpChunks — `agent_message_chunk` → `text_delta`, `agent_thought_chunk` → `thought`, `tool_call` → `tool_use(start)`, `tool_call_update` → `tool_use(update)` while running and `tool_result` on `completed`/`failed`. Terminal `{stopReason}` from the prompt response becomes `end_turn` (or `error` for JSON-RPC errors).
+- Cancel: emits `session/cancel` notification; the agent resolves the in-flight prompt with `stopReason:"cancelled"`.
+- Tool name normalization: `shell→shell.run`, `read→file.read`, `write→file.write`, `grep→file.grep`, `glob→file.glob`, `code→code.intel`, `use_aws→aws.cli`, `web_fetch→web.fetch`, `web_search→web.search`. Unknown names pass through unchanged.
+- argv knobs surfaced via `BackendConfig.extra`: `agent`, `model`, `agent_engine` (`v1`/`v2`/`kas`), `trust_all_tools`, `trust_tools`, `token_path`, `mcp_servers`, `extra_cli_args`. Resolution of the `kiro-cli` binary follows `extra['kiro_cli']` → `$STRATOCLAVE_LOOM_KIRO_CLI` → `shutil.which('kiro-cli')`.
+- `handle_permission` raises (no runtime permission routing yet); permissions are pre-approved at spawn via `trust_all_tools` / `trust_tools`. `resume_from_jsonl` is rejected with a clear error pointing to `extra['acp_session_id']`.
+- 10 wire-level tests (`tests/adapters/test_kiro_code_wire.py`) using a Python ACP stub (`tests/adapters/_kiro_stub.py`): text deltas, tool_call + tool_call_update, cancel mid-turn, idempotent close, env-var resolution, argv carries `--trust-tools`/`--agent-engine`/`--model`, `session/load` with pre-existing ACP session id, `resume_from_jsonl` rejection, `handle_permission` raises.
+- Live test against `kiro-cli` 2.4.0: prompt "Reply with the single word OK and nothing else." → `text_delta` ("OK") + `end_turn`.
 
-## 技術的な成果
+### 2026-05-22 — wire-level Claude Code adapter
 
-- **Pure Python**: 標準ライブラリのみで動作 (実行時依存ゼロ)
-- **mypy strict**: 型エラーゼロ
-- **AgentBackend ABC**: 7 メソッドで CLI 抽象化を表現
-- **stdio JSON-RPC framing**: subprocess の lifecycle を `start/send/receive/cancel/close` で制御
-- **環境変数 passthrough**: stratoclave 連携は env のみ (直接依存なし)
+- `ClaudeCodeBackend.send_message` spawns `claude --print --output-format stream-json --input-format stream-json --include-partial-messages --verbose` and translates each line into an `AcpChunk`.
+- Translates: `system/init` (captures CLI session id for resume), `stream_event/content_block_delta/text_delta` → `text_delta` chunk, `stream_event/content_block_start/tool_use` → `tool_use` chunk, `stream_event/content_block_delta/input_json_delta` → `tool_use` partial chunk, `user/tool_result` → `tool_result` chunk, `assistant/thinking` → `thought` chunk, `result` → `end_turn` or `error` chunk.
+- Tool names normalized: `Bash` → `shell.run`, `Read` → `file.read`, `Write` → `file.write`, `Edit` → `file.edit`, `Glob` → `file.glob`, `Grep` → `file.grep`. Unknown names pass through unchanged.
+- `cancel` routes to `StdioTransport.cancel()` (SIGINT → SIGTERM → SIGKILL ladder, ms grace from `STRATOCLAVE_LOOM_CANCEL_GRACE_MS`).
+- `close` is idempotent and tears down the in-flight transport if any.
+- `handle_permission` raises `AdapterError`: `claude --print` has no runtime permission callback; permissions must be configured at spawn via `BackendConfig.allowed_tools` / `extra['permission_mode']`.
+- Resolves the `claude` executable via, in order: `BackendConfig.extra['claude_cli']` → `$STRATOCLAVE_LOOM_CLAUDE_CLI` → `shutil.which('claude')`.
+- Subsequent turns within one `AgentSession` resume by passing `--resume <captured-session-id>`.
+- Added 9 wire-level tests using a Python stub binary (`tests/adapters/_claude_stub.py`): text deltas, tool_use translation, error result, cancel-mid-turn, idempotent close, env-var resolution, resume id propagation.
+- Added `examples/quickstart.py`. Live test against `claude` 2.1.145: prompt "reply OK and nothing else" → 2 text deltas + end_turn (~2.1 s, $0.167).
 
-## 未実装 / 将来対応
+### 2026-05-21 — initial walking skeleton
 
-### v0.1 残タスク (優先度順)
+- Confirmed 4-OSS series design in `docs/DESIGN.md` (1014 lines).
+- Repo skeleton: LICENSE / README / CONTRIBUTING / SECURITY / CODE_OF_CONDUCT / .gitignore.
+- `pyproject.toml` (Python 3.11+ / Apache-2.0 / pytest + ruff + mypy + coverage).
+- `core` / `config` / `transport` / `adapters` / `runtime` / `cli` modules.
+- Mock backend and Claude Code skeleton (normalize-only at the time).
+- 18 unit tests, CLI smoke test, StdioTransport round-trip.
+- GitHub Actions CI workflow.
+- Three required docs (this file is one).
 
-| 優先度 | タスク |
+## Technical highlights
+
+- **Pure Python** — runtime dependencies = stdlib only.
+- **mypy strict clean** — zero typing escapes.
+- **AgentBackend ABC** — 7 methods covering the CLI surface area.
+- **stdio JSON-RPC framing** — subprocess lifecycle is `start / send / receive / cancel / close`.
+- **Env-only stratoclave coupling** — loom never imports stratoclave; the orchestrator passes proxy env vars at spawn.
+- **Tool name normalization** — both directions (CLI → normalized for output, normalized → CLI for `--allowed-tools`).
+
+## Outstanding / next up
+
+### v0.1 — remaining
+
+| Priority | Task |
 |---|---|
-| 高 | `ClaudeCodeBackend.send_message` の wire-level 実装 (Claude Code CLI の headless モードで stdio 経由) |
-| 高 | `ClaudeCodeBackend.cancel` / `close` / `handle_permission` の実装 |
-| 中 | `examples/quickstart.py` の追加 |
-| 中 | `pre-commit` 設定 |
-| 中 | E2E テスト (実 Claude Code を使う、`pytest -m e2e`) |
-| 低 | `StdioTransport.receive` の back-pressure テスト |
+| Medium | `pre-commit` setup |
+| Medium | Optional `pytest -m e2e` job that drives the real `claude` CLI |
+| Low | `StdioTransport.receive` back-pressure test |
+| Low | Translate the rest of `docs/` to English (DESIGN.md / GETTING_STARTED.md / PROJECT_RULES.md) |
 
 ### v0.2
 
-- OpenCode adapter (PoC 後) と native ACP 接続
-- `ProcessPool` の優先度 / queue 詳細制御
-- `pyproject.toml` の `Programming Language :: Python :: 3.13` 追加
+- OpenCode adapter (after PoC) using its native ACP server.
+- `ProcessPool` priority / queueing.
+- `pyproject.toml` Python 3.13 classifier.
 
 ### v0.3
 
-- Kiro adapter (PoC 後)
-- Codex adapter (PoC 後)
-- `allowed_tools` の adapter 側強制
-- `resume_from_jsonl` を全 adapter で対応
+- Codex adapter (after PoC).
+- Adapter-side enforcement of `allowed_tools` for Kiro (today the adapter only forwards spawn-time hints).
+- Runtime permission routing for `kiro_code` — wire `session/request_permission` (ACP) into `PermissionRequest` / `handle_permission`.
+- `resume_from_jsonl` support across all adapters.
 
 ### v1.0
 
-- Public API 凍結 (semver 1.x)
-- 性能改善 (subprocess pool reuse、stdio の zero-copy)
+- Public API freeze (semver 1.x).
+- Performance work — subprocess pool reuse, stdio zero-copy.
 
-## チーム体制
+## Team
 
-| 役割 | Agent | 状態 | 現在のタスク |
+| Role | Agent | Status | Current task |
 |---|---|---|---|
-| Owner | littlemex | active | DESIGN / PR レビュー |
-| 実装担当 | Claude Code | active | v0.1 wire-level (ClaudeCodeBackend.send_message) |
+| Owner | littlemex | active | design / PR review |
+| Implementer | Claude Code | active | v0.1 polish (pre-commit, e2e harness) |
 
-## 次のステップ
+## Next steps
 
-優先度順:
+In priority order:
 
-1. **`ClaudeCodeBackend.send_message` 実装** — Claude Code CLI を spawn し、stdio JSONL を `AcpChunk` に変換する
-2. **E2E テストハーネス** — 実 Claude Code をオプションで spawn して 1 turn 動作確認
-3. **`examples/quickstart.py`** — README / GETTING_STARTED と整合する最小サンプル
-4. **stratoclave-distill のリポジトリ作成** — 設計に従い別 OSS としてスタート (loom 実装と並行)
+1. **Pre-commit** — wire ruff + mypy + pytest into the local pre-commit flow.
+2. **E2E test harness** — opt-in pytest mark that exercises the real `claude` CLI.
+3. **stratoclave-distill bootstrapping** — start the next OSS now that loom is real (DESIGN.md is already aligned).
+4. **English doc pass** — DESIGN.md, GETTING_STARTED.md, PROJECT_RULES.md.
 
-## リンク
+## Links
 
 - [GETTING_STARTED.md](./GETTING_STARTED.md)
 - [PROJECT_RULES.md](./PROJECT_RULES.md)
 - [DESIGN.md](./DESIGN.md)
 - [README.md](../README.md)
+- [examples/quickstart.py](../examples/quickstart.py)
