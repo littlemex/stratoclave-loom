@@ -14,6 +14,8 @@ dist/
 .venv/
 venv/
 env/
+# safety net for accidental venvs created via `python -m venv <typo>`
+**/pyvenv.cfg
 
 # tooling
 .mypy_cache/
