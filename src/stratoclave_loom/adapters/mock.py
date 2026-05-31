@@ -50,7 +50,13 @@ class MockBackend(AgentBackend):
         content: str,
         *,
         context_files: tuple[str, ...] = (),
+        model: str | None = None,
+        history: tuple[Mapping[str, Any], ...] | None = None,
     ) -> AsyncIterator[AcpChunk]:
+        # ``model`` and ``history`` are accepted for protocol
+        # compatibility but the mock backend has no notion of them; we
+        # ignore both.
+        del model, history
         if session_id not in self._configs:
             raise SessionClosedError(f"session {session_id!r} is not active")
         return self._stream(session_id, content)
