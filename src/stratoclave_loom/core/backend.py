@@ -6,7 +6,14 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
-from stratoclave_loom.core.types import AcpChunk, BackendConfig, NormalizedTurn, PermissionRequest
+from stratoclave_loom.core.types import (
+    AcpChunk,
+    BackendConfig,
+    ModelFilter,
+    ModelInfo,
+    NormalizedTurn,
+    PermissionRequest,
+)
 
 
 class AgentBackend(ABC):
@@ -41,6 +48,8 @@ class AgentBackend(ABC):
         content: str,
         *,
         context_files: tuple[str, ...] = (),
+        model: str | None = None,
+        history: tuple[Mapping[str, Any], ...] | None = None,
     ) -> AsyncIterator[AcpChunk]:
         """Send a user message and return a stream of response chunks.
 
@@ -52,6 +61,25 @@ class AgentBackend(ABC):
         adapters perform any pre-stream setup — e.g., dispatching to a
         subprocess — without forcing every caller to dance around the
         generator's first ``__anext__``.
+
+        ``model`` is an opaque token from :meth:`list_models` selecting
+        which underlying model the adapter should use for this turn.
+        Adapters that cannot switch models at runtime (e.g. CLI-backed
+        adapters where the model is baked into the binary) must accept
+        the parameter and ignore it. Passing ``None`` means "stay on
+        whatever the adapter last used for this session, falling back
+        to :attr:`default_model_id`".
+
+        ``history``, when supplied, is the prior turn list the host
+        wants this stateless adapter to replay before the new
+        ``content``. Each entry is a mapping with at least ``role``
+        (``"user"`` / ``"assistant"``) and ``content`` (string).
+        Stateless adapters like ``bedrock`` use this to reconstruct
+        the conversation without keeping their own buffer across
+        turns -- the host's event log becomes the single source of
+        truth, which means a forked session inherits its parent's
+        context for free. CLI-backed adapters that already maintain
+        conversation state must accept the parameter and ignore it.
         """
 
     @abstractmethod
@@ -92,3 +120,38 @@ class AgentBackend(ABC):
         Implementations that do not support resume must return ``()``.
         Higher layers must check the empty case before invoking the agent.
         """
+
+    # -- model picker surface (optional, default no-op) ---------------------
+    #
+    # Adapters that expose a runtime-selectable model catalogue override
+    # both ``list_models`` and ``default_model_id``. The defaults below
+    # keep CLI-backed adapters (claude_code / kiro_code) honest without
+    # forcing every implementation to spell out an empty list.
+
+    async def list_models(self, filter: ModelFilter | None = None) -> tuple[ModelInfo, ...]:
+        """Return the catalogue of models the picker can offer.
+
+        The default returns ``()``; CLI adapters whose model is baked
+        in at install time leave this alone. Adapters that talk to a
+        provider with a discoverable catalogue (Bedrock, vLLM, ...)
+        override this to fetch the live list and apply ``filter``.
+
+        ``filter`` lets callers narrow noisy catalogues without each
+        adapter having to roll its own substring matcher; see
+        :class:`ModelFilter` for the shared semantics.
+        """
+
+        del filter  # default has nothing to filter
+        return ()
+
+    @property
+    def default_model_id(self) -> str | None:
+        """Adapter-suggested initial selection.
+
+        Returned to ``send_message`` when the caller passes ``model=None``
+        and the session has not yet picked a model. ``None`` means "no
+        notion of a model" -- the picker UI should hide its model
+        selector for this backend.
+        """
+
+        return None

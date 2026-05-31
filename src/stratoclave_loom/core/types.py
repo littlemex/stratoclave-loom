@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 ChunkType = Literal[
     "text_delta",
@@ -95,3 +95,98 @@ class BackendConfig:
     extra: Mapping[str, Any] = field(default_factory=dict)
     """Adapter-specific options. Keys with no matching adapter must be
     ignored silently to allow forward-compatibility."""
+
+
+@dataclass(frozen=True, slots=True)
+class ModelInfo:
+    """A single selectable model exposed by an :class:`AgentBackend`.
+
+    Adapters surface their model catalogue through
+    :meth:`AgentBackend.list_models` so the host application can render
+    a picker without having to know what a "Bedrock model id" or
+    "Claude profile" looks like. The fields are deliberately generic:
+
+    * ``id`` -- the opaque token the adapter expects back in
+      ``send_message(..., model=id)``. Adapters must round-trip this
+      value verbatim.
+    * ``name`` -- short, human-readable label (``"Claude Opus 4.7"``).
+    * ``family`` -- coarse grouping for filtering (``"claude"``,
+      ``"nova"``, ``"llama"`` …). May be ``None`` when the adapter
+      cannot infer a family.
+    * ``provider`` -- upstream owner of the model (``"anthropic"``,
+      ``"amazon"`` …). May be ``None`` for adapter-internal models.
+    * ``description`` -- one-line free-text shown as a tooltip.
+    * ``extra`` -- adapter-specific metadata (modality flags, region
+      constraints …) that the picker UI may use opportunistically but
+      must tolerate not understanding.
+
+    The struct is hashable / frozen so callers can stash it in sets or
+    use it as a dict key without worrying about mutation.
+    """
+
+    id: str
+    name: str
+    family: str | None = None
+    provider: str | None = None
+    description: str | None = None
+    extra: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelFilter:
+    """Reusable predicate for narrowing a noisy model list.
+
+    Backends like Bedrock surface hundreds of foundation-model entries;
+    a picker UI is unusable without a way to slice them. ``ModelFilter``
+    lives in the core so every adapter (and any host application) can
+    consume the same filter spec without re-implementing substring /
+    family matching.
+
+    Match semantics
+    ---------------
+    * ``substring`` is case-insensitive and tested against ``id`` *and*
+      ``name`` *and* ``family`` joined by spaces; this lets
+      ``"opus 4.7"`` find ``"Claude Opus 4.7"`` regardless of which
+      field carries the version.
+    * ``family`` is an exact case-insensitive equality against
+      ``ModelInfo.family``.
+    * ``provider`` is an exact case-insensitive equality against
+      ``ModelInfo.provider``.
+
+    All conditions are ANDed; a ``None`` field means "do not constrain
+    on this axis". An empty filter (default constructor) matches every
+    model and is the right value to pass when the caller has no
+    preference.
+    """
+
+    substring: str | None = None
+    family: str | None = None
+    provider: str | None = None
+
+    def matches(self, model: ModelInfo) -> bool:
+        """Return ``True`` iff ``model`` satisfies every set condition."""
+
+        if self.family is not None and (model.family or "").lower() != self.family.lower():
+            return False
+        if self.provider is not None and (model.provider or "").lower() != self.provider.lower():
+            return False
+        if self.substring:
+            haystack = " ".join(
+                part
+                for part in (model.id, model.name, model.family or "", model.provider or "")
+                if part
+            ).lower()
+            if self.substring.lower() not in haystack:
+                return False
+        return True
+
+    def apply(self, models: tuple[ModelInfo, ...]) -> tuple[ModelInfo, ...]:
+        """Return only the entries from ``models`` that match this filter."""
+
+        return tuple(m for m in models if self.matches(m))
+
+    @classmethod
+    def empty(cls) -> Self:
+        """An always-matching filter; equivalent to ``ModelFilter()``."""
+
+        return cls()

@@ -9,7 +9,13 @@ from typing import Any
 
 from stratoclave_loom.core.backend import AgentBackend
 from stratoclave_loom.core.errors import SessionClosedError
-from stratoclave_loom.core.types import AcpChunk, BackendConfig, PermissionRequest
+from stratoclave_loom.core.types import (
+    AcpChunk,
+    BackendConfig,
+    ModelFilter,
+    ModelInfo,
+    PermissionRequest,
+)
 
 
 class AgentSession:
@@ -62,6 +68,8 @@ class AgentSession:
         content: str,
         *,
         context_files: tuple[str, ...] = (),
+        model: str | None = None,
+        history: tuple[Any, ...] | None = None,
     ) -> AsyncIterator[AcpChunk]:
         if self._closed:
             raise SessionClosedError(f"session {self._session_id!r} already closed")
@@ -69,12 +77,28 @@ class AgentSession:
             await self.initialize()
         # Each backend's ``send_message`` is itself an ``async def`` returning
         # an :class:`AsyncIterator`, so we must await it to obtain the iterator
-        # before handing it back to the caller.
+        # before handing it back to the caller. ``model`` and ``history``
+        # are opaque from the session's point of view -- adapters that
+        # cannot route on them must ignore the parameters rather than
+        # reject them.
         return await self._backend.send_message(
             self._session_id,
             content,
             context_files=context_files,
+            model=model,
+            history=history,
         )
+
+    async def list_models(self, filter: ModelFilter | None = None) -> tuple[ModelInfo, ...]:
+        """Forward the catalogue query to the wrapped backend."""
+
+        return await self._backend.list_models(filter)
+
+    @property
+    def default_model_id(self) -> str | None:
+        """Backend-suggested initial selection (``None`` means not applicable)."""
+
+        return self._backend.default_model_id
 
     async def cancel(self) -> None:
         if self._closed:

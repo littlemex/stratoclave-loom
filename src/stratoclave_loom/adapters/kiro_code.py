@@ -228,7 +228,13 @@ class KiroCodeBackend(AgentBackend):
         content: str,
         *,
         context_files: tuple[str, ...] = (),
+        model: str | None = None,
+        history: tuple[Mapping[str, Any], ...] | None = None,
     ) -> AsyncIterator[AcpChunk]:
+        # Kiro Code does not expose a runtime model picker via ACP and
+        # owns its own conversation state; accept ``model`` / ``history``
+        # for protocol compatibility and drop them.
+        del model, history
         state = self._sessions.get(session_id)
         if state is None or not state.active:
             raise SessionClosedError(f"session {session_id!r} is not active")

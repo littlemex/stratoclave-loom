@@ -44,14 +44,80 @@ from typing import Any
 from stratoclave_loom.adapters._base import decode_jsonl_line
 from stratoclave_loom.adapters._registry import register_backend
 from stratoclave_loom.core.backend import AgentBackend
+from stratoclave_loom.core.catalogue import (
+    load_catalogue_file,
+    resolve_catalogue_path,
+)
 from stratoclave_loom.core.errors import AdapterError, SessionClosedError, TransportError
 from stratoclave_loom.core.types import (
     AcpChunk,
     BackendConfig,
+    ModelFilter,
+    ModelInfo,
     NormalizedTurn,
     PermissionRequest,
 )
 from stratoclave_loom.transport.stdio import StdioTransport
+
+# Path to the packaged catalogue JSON. Operators add or remove entries
+# by editing this file directly (it ships in the wheel under
+# ``stratoclave_loom/data/``); they can also override the path via
+# ``BackendConfig.extra['model_catalogue_path']`` or
+# ``$STRATOCLAVE_LOOM_CLAUDE_MODELS`` for an external file (handy when
+# new aliases need to land before a loom release).
+_DEFAULT_MODELS_FILE = Path(__file__).resolve().parent.parent / "data" / "claude_code_models.json"
+_ENV_MODELS_FILE = "STRATOCLAVE_LOOM_CLAUDE_MODELS"
+_EXTRA_MODELS_KEY = "model_catalogue_path"
+
+# Hard-coded fallback used only when the packaged JSON is missing /
+# malformed (e.g. a downstream wheel was repacked without the data
+# dir). The CLI's three aliases are the bare minimum picker entries
+# so the operator never sees an empty dropdown for a configured
+# claude_code backend.
+_FALLBACK_MODELS: tuple[ModelInfo, ...] = (
+    ModelInfo(
+        id="haiku",
+        name="Claude Haiku (latest)",
+        family="claude",
+        provider="anthropic",
+        description="Cheapest / fastest tier; CLI alias resolves to the current Haiku release.",
+    ),
+    ModelInfo(
+        id="sonnet",
+        name="Claude Sonnet (latest)",
+        family="claude",
+        provider="anthropic",
+        description="Balanced default; CLI alias resolves to the current Sonnet release.",
+    ),
+    ModelInfo(
+        id="opus",
+        name="Claude Opus (latest)",
+        family="claude",
+        provider="anthropic",
+        description="Most capable tier; CLI alias resolves to the current Opus release.",
+    ),
+)
+
+
+def _load_curated_models(extra: Mapping[str, Any] | None) -> tuple[ModelInfo, ...]:
+    """Load the curated catalogue from disk, falling back to a tiny
+    in-source list when the JSON file is missing or empty.
+
+    The lookup happens at every ``list_models`` call because the
+    operator may have edited the JSON between turns -- we want the
+    next picker fetch to reflect their change without restarting
+    atelier.
+    """
+
+    path = resolve_catalogue_path(
+        extra,
+        extra_key=_EXTRA_MODELS_KEY,
+        env_key=_ENV_MODELS_FILE,
+        default_path=_DEFAULT_MODELS_FILE,
+    )
+    loaded = load_catalogue_file(path)
+    return loaded or _FALLBACK_MODELS
+
 
 # Tool-name normalization map. See docs/DESIGN.md §5.6.
 _NORMALIZED_FROM_NATIVE: dict[str, str] = {
@@ -65,6 +131,35 @@ _NORMALIZED_FROM_NATIVE: dict[str, str] = {
 
 #: Environment variable to override the ``claude`` executable used by the adapter.
 ENV_CLAUDE_CLI = "STRATOCLAVE_LOOM_CLAUDE_CLI"
+
+#: Environment variable for opting OUT of the default
+#: ``--dangerously-skip-permissions`` flag. Set to ``0`` / ``false`` /
+#: ``no`` to disable. Any other value (including unset) keeps the
+#: default ON, which matches atelier's "operator already trusts the
+#: cwd" UX where each turn spawns a fresh subprocess and an
+#: interactive permission prompt would abort the turn silently.
+ENV_DANGEROUSLY_SKIP = "STRATOCLAVE_LOOM_CLAUDE_DANGEROUSLY_SKIP"
+
+
+def _resolve_dangerously_skip(extra: Mapping[str, Any] | None) -> bool:
+    """Decide whether to default ``--dangerously-skip-permissions`` on.
+
+    Resolution order: ``extra['dangerously_skip_permissions']`` (any
+    truthy / falsy value) → ``$STRATOCLAVE_LOOM_CLAUDE_DANGEROUSLY_SKIP``
+    → ``True``. The default is ON because atelier already requires the
+    operator to point ``ATELIER_AGENT_CWD_CLAUDE_CODE`` at a directory
+    they trust, and a per-turn permission prompt would otherwise abort
+    the turn with no UI affordance to grant.
+    """
+
+    if isinstance(extra, Mapping):
+        explicit = extra.get("dangerously_skip_permissions")
+        if explicit is not None:
+            return bool(explicit)
+    raw = os.environ.get(ENV_DANGEROUSLY_SKIP)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in ("0", "false", "no", "off")
 
 
 def _resolve_claude_cli(extra: Mapping[str, Any]) -> str:
@@ -91,7 +186,14 @@ def _resolve_claude_cli(extra: Mapping[str, Any]) -> str:
 class _SessionState:
     """Per-session bookkeeping owned by the adapter."""
 
-    __slots__ = ("active", "claude_cli", "cli_session_id", "config", "transport")
+    __slots__ = (
+        "active",
+        "claude_cli",
+        "cli_session_id",
+        "config",
+        "current_model",
+        "transport",
+    )
 
     def __init__(self, config: BackendConfig, claude_cli: str) -> None:
         self.config = config
@@ -100,6 +202,10 @@ class _SessionState:
         # from the system/init line and pass it via --resume on later turns.
         self.cli_session_id: str | None = None
         self.transport: StdioTransport | None = None
+        # Sticky per-session model selection; ``send_message`` updates this
+        # whenever the host passes a non-None ``model``. Forwarded into
+        # ``--model`` on the CLI argv so subsequent turns honour it.
+        self.current_model: str | None = None
         self.active = True
 
 
@@ -142,10 +248,19 @@ class ClaudeCodeBackend(AgentBackend):
         content: str,
         *,
         context_files: tuple[str, ...] = (),
+        model: str | None = None,
+        history: tuple[Mapping[str, Any], ...] | None = None,
     ) -> AsyncIterator[AcpChunk]:
+        # ``history`` is owned by the CLI itself (resumed via --resume),
+        # so we accept and drop it. ``model`` is forwarded to the CLI's
+        # ``--model`` flag; explicit passes update the sticky selection
+        # so subsequent turns inherit it without the picker re-sending.
+        del history
         state = self._sessions.get(session_id)
         if state is None or not state.active:
             raise SessionClosedError(f"session {session_id!r} is not active")
+        if model:
+            state.current_model = model
         if state.transport is not None:
             raise AdapterError(
                 f"session {session_id!r} already has a turn in flight; "
@@ -213,6 +328,13 @@ class ClaudeCodeBackend(AgentBackend):
         ]
         if state.cli_session_id is not None:
             argv.extend(["--resume", state.cli_session_id])
+        # Runtime model override: the CLI accepts an alias
+        # (``haiku`` / ``sonnet`` / ``opus``) or a full model id like
+        # ``claude-sonnet-4-5``. We forward whatever the host picked
+        # verbatim; bad ids surface as the CLI's own error which the
+        # transport layer turns into an ``agent_error`` event.
+        if state.current_model:
+            argv.extend(["--model", state.current_model])
         if state.config.allowed_tools is not None:
             # Translate normalized names back to the CLI's native names. The
             # CLI accepts a comma- or space-separated list; we use commas to
@@ -220,15 +342,27 @@ class ClaudeCodeBackend(AgentBackend):
             native = ",".join(_native_tool_name(name) for name in state.config.allowed_tools)
             argv.extend(["--allowed-tools", native])
         extra = state.config.extra
+        permission_mode_set = False
         if isinstance(extra, Mapping):
             permission_mode = extra.get("permission_mode")
             if isinstance(permission_mode, str) and permission_mode:
                 argv.extend(["--permission-mode", permission_mode])
+                permission_mode_set = True
             extra_argv = extra.get("extra_cli_args")
             if isinstance(extra_argv, list | tuple):
                 for a in extra_argv:
                     if isinstance(a, str):
                         argv.append(a)
+        # Default to ``--dangerously-skip-permissions``: each turn spawns
+        # a fresh subprocess (atelier reuses the CLI session id but not
+        # the OS process), so any permission prompt aborts the turn
+        # silently. The atelier UX is "operator already vetted the cwd
+        # by configuring it" -- letting the CLI ask for permission per
+        # turn would force ``gh`` / ``WebFetch`` etc. to fail with no
+        # affordance to grant. Operators opt out by setting the extra
+        # flag to ``False`` or exporting the env var.
+        if not permission_mode_set and _resolve_dangerously_skip(state.config.extra):
+            argv.append("--dangerously-skip-permissions")
         return tuple(argv)
 
     def _build_env(self, config: BackendConfig) -> dict[str, str]:
@@ -509,6 +643,35 @@ class ClaudeCodeBackend(AgentBackend):
         # that have a frozen JSONL must extract the trailing session_id and
         # pass it via ``BackendConfig.extra['cli_session_id']``.
         return ()
+
+    # -- model picker ------------------------------------------------------
+    #
+    # Claude Code accepts ``--model <alias-or-id>`` so the picker is just
+    # surface for the host: we expose a curated alias list, the SPA
+    # forwards the chosen id back via ``send_message(model=...)``, and
+    # ``_build_argv`` adds the flag. Operators can type any other id
+    # into the SPA's filter input -- the CLI errors out cleanly if the
+    # name is unknown.
+
+    async def list_models(self, filter: ModelFilter | None = None) -> tuple[ModelInfo, ...]:
+        # ``_load_curated_models`` re-reads the JSON file every call so
+        # operator-side edits to ``data/claude_code_models.json`` (or
+        # the externally-managed override) reach the picker on the
+        # next fetch without an atelier restart. The cost is one stat
+        # + one ``json.loads`` per ``list_models`` call -- the SPA
+        # caches the catalogue on its side, so we hit this at most
+        # once per backend switch + explicit refresh.
+        catalogue = _load_curated_models(extra=None)
+        if filter is None:
+            return catalogue
+        return filter.apply(catalogue)
+
+    @property
+    def default_model_id(self) -> str | None:
+        # ``None`` lets the CLI pick its own install-time default. The
+        # picker reflects that as "(default)" so the operator opts into
+        # an alias explicitly.
+        return None
 
 
 def _native_tool_name(normalized: str) -> str:

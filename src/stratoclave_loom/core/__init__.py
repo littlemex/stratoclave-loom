@@ -13,6 +13,8 @@ from stratoclave_loom.core.session import AgentSession
 from stratoclave_loom.core.types import (
     AcpChunk,
     BackendConfig,
+    ModelFilter,
+    ModelInfo,
     NormalizedTurn,
     PermissionRequest,
 )
@@ -25,6 +27,8 @@ __all__ = [
     "BackendConfig",
     "BackendNotFoundError",
     "LoomError",
+    "ModelFilter",
+    "ModelInfo",
     "NormalizedTurn",
     "PermissionDeniedError",
     "PermissionRequest",

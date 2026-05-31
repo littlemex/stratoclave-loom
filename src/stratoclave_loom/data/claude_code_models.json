@@ -1,0 +1,75 @@
+{
+  "_comment": "Curated catalogue of Anthropic Claude models the ``claude`` CLI can target via --model. Append a new entry to surface it in the picker; the adapter loads this file at startup. Aliases (haiku/sonnet/opus) come first so they are the recommended choice; explicit version ids follow for operators who want to pin a specific release. Edit this file or set $STRATOCLAVE_LOOM_CLAUDE_MODELS to point at an external file.",
+  "models": [
+    {
+      "id": "haiku",
+      "name": "Claude Haiku (latest)",
+      "family": "claude",
+      "provider": "anthropic",
+      "description": "Cheapest / fastest tier; CLI alias resolves to the current Haiku release."
+    },
+    {
+      "id": "sonnet",
+      "name": "Claude Sonnet (latest)",
+      "family": "claude",
+      "provider": "anthropic",
+      "description": "Balanced default; CLI alias resolves to the current Sonnet release."
+    },
+    {
+      "id": "opus",
+      "name": "Claude Opus (latest)",
+      "family": "claude",
+      "provider": "anthropic",
+      "description": "Most capable tier; CLI alias resolves to the current Opus release."
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "name": "Claude Haiku 4.5",
+      "family": "claude",
+      "provider": "anthropic",
+      "description": "Specific Haiku 4.5 release pinned by version."
+    },
+    {
+      "id": "claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5",
+      "family": "claude",
+      "provider": "anthropic",
+      "description": "Specific Sonnet 4.5 release pinned by version."
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "name": "Claude Sonnet 4.6",
+      "family": "claude",
+      "provider": "anthropic",
+      "description": "Specific Sonnet 4.6 release pinned by version."
+    },
+    {
+      "id": "claude-opus-4-1",
+      "name": "Claude Opus 4.1",
+      "family": "claude",
+      "provider": "anthropic",
+      "description": "Specific Opus 4.1 release pinned by version."
+    },
+    {
+      "id": "claude-opus-4-5",
+      "name": "Claude Opus 4.5",
+      "family": "claude",
+      "provider": "anthropic",
+      "description": "Specific Opus 4.5 release pinned by version."
+    },
+    {
+      "id": "claude-opus-4-7",
+      "name": "Claude Opus 4.7",
+      "family": "claude",
+      "provider": "anthropic",
+      "description": "Specific Opus 4.7 release pinned by version."
+    },
+    {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8",
+      "family": "claude",
+      "provider": "anthropic",
+      "description": "Specific Opus 4.8 release pinned by version."
+    }
+  ]
+}
